@@ -1,0 +1,26 @@
+name: Bug report
+description: Something broke - a crash, wrong output, or unexpected behavior
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you run, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `overlap doctor --json`
+      description: Paste the full output. It contains versions and environment checks, no data.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      description: Exact commands. If the input file matters and is shareable, describe its shape (container, codec, duration, source tool).
+    validations:
+      required: false

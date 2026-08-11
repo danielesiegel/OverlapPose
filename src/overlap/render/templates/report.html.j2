@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>overlap report - {{ report.summary.overlap_pct }}% overlap</title>
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0;
+         background: #f8fafc; color: #0f172a; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 24px 64px; }
+  header { border-bottom: 2px solid #0f172a; padding-bottom: 16px; margin-bottom: 24px; }
+  header h1 { font-size: 18px; margin: 0 0 4px; letter-spacing: 0.02em; }
+  header .meta { color: #64748b; font-size: 13px; }
+  .verdict { font-size: 28px; font-weight: 700; margin: 24px 0 8px; }
+  .coverage { background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px;
+              padding: 10px 14px; margin: 8px 0 4px; font-size: 13px; color: #78350f; }
+  .verdict .pct { color: #dc2626; }
+  .cards { display: flex; flex-wrap: wrap; gap: 12px; margin: 20px 0 32px; }
+  .card { background: #fff; border: 1px solid #e2e8f0; padding: 14px 18px; min-width: 150px; }
+  .card .k { font-size: 12px; color: #64748b; text-transform: uppercase; letter-spacing: 0.06em; }
+  .card .v { font-size: 22px; font-weight: 600; margin-top: 2px; }
+  .flags { margin: 0 0 24px; font-size: 14px; }
+  .flags span { display: inline-block; background: #fef2f2; border: 1px solid #fecaca;
+                color: #b91c1c; padding: 3px 10px; margin-right: 8px; }
+  table { width: 100%; border-collapse: collapse; background: #fff; font-size: 14px; }
+  th { text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em;
+       color: #64748b; border-bottom: 2px solid #0f172a; padding: 8px 10px; }
+  td { border-bottom: 1px solid #e2e8f0; padding: 8px 10px; vertical-align: top; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .hint { color: #64748b; font-size: 12px; }
+  .legend { margin: 12px 0 24px; font-size: 13px; color: #475569; }
+  .legend i { display: inline-block; width: 12px; height: 12px; margin: 0 6px 0 14px;
+              vertical-align: -1px; }
+  .tl { display: block; }
+  .file-tl { margin: 2px 0; }
+  footer { margin-top: 40px; font-size: 12px; color: #94a3b8; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>overlap - fingerprint comparison report</h1>
+    <div class="meta">
+      generated {{ report.generated }} ·
+      manifest{% if report.manifest.label %} “{{ report.manifest.label }}”{% endif %}
+      ({{ report.manifest.n_files }} files, algo {{ report.manifest.algo_id }}) ·
+      merkle {{ report.manifest.merkle_root[:16] }}…
+    </div>
+  </header>
+
+  <div class="verdict">
+    <span class="pct">{{ report.summary.overlap_pct }}%</span>
+    {% if report.mode == "manifest-vs-manifest" -%}
+      of this offer matches the other offer
+    {%- else -%}
+      of offered footage matches this corpus
+    {%- endif %}
+  </div>
+  {%- if report.coverage_note %}
+  {#- A headline percentage that omits what could not be checked is a claim, not
+      a measurement, so the limits sit beside the number rather than in a
+      footnote or a JSON field nobody opens. #}
+  <div class="coverage">
+    <strong>What this comparison could not check:</strong> {{ report.coverage_note }}
+  </div>
+  {%- endif %}
+  {%- if report.against %}
+  <div class="hint">
+    compared against
+    {%- if report.against.label %} “{{ report.against.label }}”{% endif %}
+    ({{ report.against.files }} files, {{ report.against.hours }} h at
+    {{ report.against.sample_fps }} fps)
+  </div>
+  {%- endif %}
+  <div class="hint">
+    {{ report.summary.matched_hours }} of {{ report.summary.offered_hours }} offered hours,
+    across {{ report.summary.files_with_overlap }} of {{ report.summary.files_offered }} files.
+    Speed-adjusted underlying footage: {{ report.summary.speed_adjusted_matched_hours }} h.
+  </div>
+
+  <div class="cards">
+    <div class="card"><div class="k">exact (byte-identical)</div>
+      <div class="v">{{ report.summary.by_tier_hours.exact }} h</div></div>
+    <div class="card"><div class="k">strong</div>
+      <div class="v">{{ report.summary.by_tier_hours.strong }} h</div></div>
+    <div class="card"><div class="k">probable</div>
+      <div class="v">{{ report.summary.by_tier_hours.probable }} h</div></div>
+    <div class="card"><div class="k">offered</div>
+      <div class="v">{{ report.summary.offered_hours }} h</div></div>
+  </div>
+
+  {% set flags = report.summary.flags %}
+  {% if flags.slowdown_files or flags.spliced_files or flags.flipped_files
+        or flags.cropped_files or flags.weak_only_files %}
+  <div class="flags">
+    {% if flags.slowdown_files %}<span>⚠ {{ flags.slowdown_files }} file(s) slowed down - billable-hours inflation</span>{% endif %}
+    {% if flags.spliced_files %}<span>{{ flags.spliced_files }} spliced file(s)</span>{% endif %}
+    {% if flags.flipped_files %}<span>{{ flags.flipped_files }} mirrored file(s)</span>{% endif %}
+    {% if flags.cropped_files %}<span>{{ flags.cropped_files }} cropped file(s)</span>{% endif %}
+    {% if flags.weak_only_files %}<span>{{ flags.weak_only_files }} file(s) with
+      weak-only evidence (not counted)</span>{% endif %}
+  </div>
+  {% endif %}
+
+  <div class="legend">Matched spans on the offered file's timeline:
+    <i style="background:#7c3aed"></i>exact
+    <i style="background:#dc2626"></i>strong
+    <i style="background:#ea580c"></i>probable
+    <i style="background:#9ca3af"></i>weak
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>offered file</th><th>duration</th><th>overlap</th>
+          <th>matched against</th><th>signals</th><th style="width:32%">timeline</th></tr>
+    </thead>
+    <tbody>
+      {% for f in report.files if f.overlap_pct > 0 or f.matches %}
+      <tr>
+        <td>{{ f.relpath }}</td>
+        <td class="num">{{ f.duration_s }} s</td>
+        <td class="num"><strong>{{ f.overlap_pct }}%</strong></td>
+        <td>
+          {% if f.sha256_exact %}byte-identical file in corpus{% else %}
+            {% for cf in f.matches | map(attribute="corpus_file") | unique %}
+              {{ cf }}{% if not loop.last %}<br>{% endif %}
+            {% endfor %}
+          {% endif %}
+        </td>
+        <td>
+          {% set sigs = [] %}
+          {% for m in f.matches %}
+            {% if m.speed_ratio >= 1.1 and ("slowed ~" ~ "%.1f"|format(m.speed_ratio) ~ "x") not in sigs %}
+              {% if sigs.append("slowed ~" ~ "%.1f"|format(m.speed_ratio) ~ "x") %}{% endif %}
+            {% endif %}
+            {% if m.mirrored and "h-flip" not in sigs %}{% if sigs.append("h-flip") %}{% endif %}{% endif %}
+            {% set crop_sig = "cropped " ~ m.crop_geometry %}
+            {% if m.crop_pct and crop_sig not in sigs %}{% if sigs.append(crop_sig) %}{% endif %}{% endif %}
+          {% endfor %}
+          {% if f.matched_segments and f.matched_segments > 1 %}
+            {% if sigs.append(f.matched_segments ~ " segments from "
+                 ~ (f.matched_sources | length) ~ " owned file(s)") %}{% endif %}
+          {% endif %}
+          {{ sigs | join(", ") }}
+        </td>
+        <td>
+          <svg class="tl" viewBox="0 0 100 10" preserveAspectRatio="none"
+               width="100%" height="14">
+            <rect x="0" y="2" width="100" height="6" fill="#e2e8f0"/>
+            {% if f.sha256_exact %}
+              <rect x="0" y="2" width="100" height="6" fill="{{ 'exact' | tier_color }}"/>
+            {% else %}
+              {% for m in f.matches %}
+              <rect x="{{ (100 * m.q[0] / f.duration_s) | round(2) }}" y="2"
+                    width="{{ (100 * (m.q[1] - m.q[0]) / f.duration_s) | round(2) }}"
+                    height="6" fill="{{ m.tier | tier_color }}">
+                <title>{{ m.tier }} · {{ m.q[0] }} - {{ m.q[1] }}s ↔ {{ m.corpus_file }}
+{{ m.c[0] }} - {{ m.c[1] }}s · speed {{ m.speed_ratio }}x{% if m.mirrored %} · mirrored{% endif %}{% if m.crop_pct %} · cropped ~{{ m.crop_pct }}%{% endif %}</title>
+              </rect>
+              {% endfor %}
+            {% endif %}
+          </svg>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% set weak_files = report.files | selectattr("weak_evidence") | list %}
+  {% if weak_files %}
+  <h2 style="font-size:15px;margin-top:28px">Weak evidence - not counted above</h2>
+  <p class="hint">These files show matching structure that fell below the
+     reporting threshold. That is not a clearance: inspect them, or re-run with
+     <code>--tier weak</code> to include them in the numbers.</p>
+  <table>
+    <thead><tr><th>offered file</th><th>duration</th><th>weak-matched</th>
+               <th>against</th></tr></thead>
+    <tbody>
+      {% for f in weak_files %}
+      <tr><td>{{ f.relpath }}</td><td class="num">{{ f.duration_s }} s</td>
+          <td class="num">{{ f.weak_evidence.seconds }} s</td>
+          <td>{{ f.weak_evidence.runs | map(attribute="corpus_file") | unique | join(", ") }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% set clean = report.files | rejectattr("overlap_pct") | list %}
+  <p class="hint">{{ clean | length }} offered file(s) had no detected overlap.
+     Detection is bounded by the published detection matrix - absence of a match
+     here is evidence, not proof, of novelty.</p>
+
+  <footer>generated locally by overlap · no data left this machine</footer>
+</div>
+</body>
+</html>

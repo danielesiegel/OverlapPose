@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% set active = 'compare' %}
+{% block title %}overlap - compare{% endblock %}
+{% block content %}
+<h1>Compare an incoming manifest</h1>
+<p class="hint">Drop the <code>.ovlm</code> manifest a vendor sent you. It is
+checked against everything in your local index; nothing is uploaded anywhere.</p>
+
+{% if not stats.exists %}
+<p class="empty">Your index is empty - <a href="/index">index your corpus</a> first,
+otherwise every comparison will trivially report 0% overlap.</p>
+{% endif %}
+
+<form id="compare-form">
+  <label>Manifest file (.ovlm)</label>
+  <input type="file" name="manifest" accept=".ovlm" required>
+  <button type="submit">Compare</button>
+</form>
+
+<div id="job-panel" hidden>
+  <h2>Progress</h2>
+  <pre id="job-log" class="log"></pre>
+</div>
+
+<script>
+document.getElementById("compare-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const file = e.target.manifest.files[0];
+  if (!file) return;
+  const body = new FormData();
+  body.append("manifest", file);
+  const res = await fetch("/api/v1/compare", {method: "POST", body});
+  if (!res.ok) { alert((await res.json()).detail || res.statusText); return; }
+  const {job_id} = await res.json();
+  const panel = document.getElementById("job-panel");
+  const log = document.getElementById("job-log");
+  panel.hidden = false;
+  log.textContent = "comparing…\n";
+  const es = new EventSource("/api/v1/jobs/" + job_id + "/events");
+  const handle = async (ev) => {
+    const data = JSON.parse(ev.data);
+    if (data.event === "job_end") {
+      es.close();
+      if (data.status === "done") {
+        const job = await (await fetch("/api/v1/jobs/" + job_id)).json();
+        window.location = "/reports/" + job.result.report_id;
+      } else {
+        log.textContent += "job " + data.status + "\n";
+      }
+    } else {
+      log.textContent += JSON.stringify(data) + "\n";
+    }
+  };
+  es.onmessage = handle;
+  ["stage", "ann", "job_end"].forEach(name => es.addEventListener(name, handle));
+});
+</script>
+{% endblock %}

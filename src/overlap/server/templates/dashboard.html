@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% set active = 'dashboard' %}
+{% block title %}overlap - dashboard{% endblock %}
+{% block content %}
+<h1>Corpus</h1>
+{% if stats.exists %}
+<div class="cards">
+  <div class="card"><div class="k">files</div><div class="v">{{ stats.files_done }}</div></div>
+  <div class="card"><div class="k">footage</div><div class="v">{{ stats.hours }} h</div></div>
+  <div class="card"><div class="k">streams</div><div class="v">{{ stats.streams }}</div></div>
+  <div class="card"><div class="k">fingerprints</div><div class="v">{{ "{:,}".format(stats.frames) }}</div></div>
+  <div class="card"><div class="k">fingerprint</div>
+    <div class="v small">{{ stats.meta.algo_id }}/{{ stats.meta.prep_id }} @ {{ stats.meta.sample_fps }} fps</div></div>
+</div>
+{% else %}
+<p class="empty">Nothing indexed yet. Head to <a href="/index">Index</a> to fingerprint
+your first files, or run <code>overlap index &lt;paths&gt;</code>.</p>
+{% endif %}
+
+<h2>Recent jobs</h2>
+{% if jobs %}
+<table>
+  <thead><tr><th>job</th><th>kind</th><th>status</th><th>result</th></tr></thead>
+  <tbody>
+  {% for j in jobs %}
+    <tr>
+      <td><code>{{ j.job_id }}</code></td>
+      <td>{{ j.kind }}</td>
+      <td class="status-{{ j.status }}">{{ j.status }}</td>
+      <td>
+        {% if j.result and j.result.report_id %}
+          <a href="/reports/{{ j.result.report_id }}">report</a>
+        {% elif j.result %}
+          {{ j.result }}
+        {% elif j.error %}
+          <span class="err">{{ j.error }}</span>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">No jobs this session.</p>{% endif %}
+
+<h2>Recent reports</h2>
+{% if reports %}
+<table>
+  <thead><tr><th>report</th><th>mode</th><th>overlap</th><th>offered</th></tr></thead>
+  <tbody>
+  {% for r in reports %}
+    <tr>
+      <td><a href="/reports/{{ r.report_id }}">{{ r.report_id }}</a></td>
+      <td>{{ r.mode }}</td>
+      <td><strong>{{ r.summary.overlap_pct }}%</strong></td>
+      <td>{{ r.summary.offered_hours }} h</td>
+    </tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% else %}<p class="empty">No saved reports.</p>{% endif %}
+{% endblock %}

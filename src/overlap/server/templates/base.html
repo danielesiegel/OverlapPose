@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}overlap{% endblock %}</title>
+  <link rel="stylesheet" href="/static/overlap.css">
+  <script src="/static/vendor/htmx.min.js" defer></script>
+  <script src="/static/vendor/htmx-ext-sse.js" defer></script>
+</head>
+<body>
+  <nav>
+    <span class="brand">overlap</span>
+    <a href="/" {% if active == 'dashboard' %}class="on"{% endif %}>Dashboard</a>
+    <a href="/index" {% if active == 'index' %}class="on"{% endif %}>Index</a>
+    <a href="/compare" {% if active == 'compare' %}class="on"{% endif %}>Compare</a>
+    <a href="/reports" {% if active == 'reports' %}class="on"{% endif %}>Reports</a>
+    <a href="/export" {% if active == 'export' %}class="on"{% endif %}>Export</a>
+    <span class="offline-note">local only - nothing leaves this machine</span>
+  </nav>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

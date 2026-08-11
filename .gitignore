@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.python-version
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Editors
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# overlap runtime artifacts (never commit indexes, manifests, or reports)
+*.ovl/
+*.ovlm
+report*.json
+report*.html
+
+# Generated demo/fixture media (always regenerated, never committed)
+tests/**/*.mp4
+tests/**/*.mkv
+tests/**/*.webm
+tests/**/*.avi
+tests/**/*.mov
+tests/**/*.mcap
+tests/**/*.bag
+tests/**/*.db3
+demo-corpus/

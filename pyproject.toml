@@ -1,0 +1,123 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "overlap-cli"
+version = "0.2.0"
+description = "Perceptual fingerprinting and overlap detection for robotics datasets. Local-only."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+requires-python = ">=3.10"
+authors = [{ name = "World Archive" }]
+keywords = [
+  "robotics",
+  "dataset",
+  "deduplication",
+  "perceptual-hash",
+  "mcap",
+  "rosbag",
+  "video",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Science/Research",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Multimedia :: Video",
+  "Topic :: Scientific/Engineering :: Image Recognition",
+]
+dependencies = [
+  "av>=12",
+  "opencv-python-headless>=4.9",
+  "faiss-cpu>=1.8",
+  "numpy>=1.26",
+  "zstandard>=0.22",
+  "msgpack>=1.0",
+  "tomli>=2; python_version < '3.11'",
+  "typer>=0.12",
+  "rich>=13",
+  "platformdirs>=4",
+  "mcap>=1.1",
+  "mcap-ros1-support>=0.7",
+  "mcap-ros2-support>=0.5",
+  "fastapi>=0.110",
+  "uvicorn>=0.29",
+  "jinja2>=3.1",
+  "sse-starlette>=2",
+  "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+ros = ["rosbags>=0.10"]
+all = ["overlap-cli[ros]"]
+
+[project.scripts]
+overlap = "overlap.cli:main"
+
+[project.urls]
+Repository = "https://github.com/World-Archive/overlap"
+Issues = "https://github.com/World-Archive/overlap/issues"
+Changelog = "https://github.com/World-Archive/overlap/blob/main/CHANGELOG.md"
+
+[dependency-groups]
+dev = [
+  "pytest>=8",
+  "pytest-cov>=5",
+  "httpx>=0.27",
+  "ruff>=0.5",
+  "mypy>=1.10",
+  "pre-commit>=3.7",
+]
+
+[tool.hatch.build.targets.wheel]
+artifacts = ["src/overlap/py.typed"]
+packages = ["src/overlap"]
+
+[tool.hatch.build.targets.sdist]
+include = ["src", "tests", "docs", "scripts", "README.md", "CHANGELOG.md", "LICENSE", "NOTICE"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "PTH"]
+ignore = [
+  "SIM108", # ternary is not always clearer
+]
+
+[tool.ruff.lint.flake8-bugbear]
+# typer's declarative CLI pattern requires calls in argument defaults
+extend-immutable-calls = ["typer.Option", "typer.Argument"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["B011"]
+
+[tool.mypy]
+strict = true
+packages = ["overlap"]
+mypy_path = "src"
+# Native/third-party libs without stubs
+[[tool.mypy.overrides]]
+module = ["av.*", "cv2.*", "faiss.*", "mcap.*", "mcap_ros1.*", "mcap_ros2.*", "rosbags.*", "pdqhash.*", "msgpack.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+  "integration: needs ffmpeg on PATH and real deps (deselect with '-m \"not integration\"')",
+  "slow: long-running; excluded from PR CI",
+]
+addopts = "-ra"
+
+[tool.coverage.run]
+source = ["overlap"]

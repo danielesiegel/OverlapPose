@@ -1,0 +1,284 @@
+# The detection matrix - single source of truth for every claim overlap makes
+# about what it detects.
+#
+# Every row is executed by tests/integration/test_detection_matrix.py against
+# generated fixtures, and rendered into README.md / docs/detection-matrix.md by
+# scripts/gen_detection_matrix_doc.py. Docs and tests cannot drift: a test
+# (tests/unit/test_project_guards.py) fails if they are out of sync.
+#
+# tier semantics:
+#   "detect" - must match in tests; documented as expected-detected
+#   "best-effort" - allowed to fail in tests (recorded); documented honestly
+#   "none" - must NOT match; documented as not-detected
+#
+# min_overlap is the minimum reported overlap % for the manipulated file.
+# index_opts sets non-default indexing for that row (documented in the table),
+# e.g. edge-crop variants, which are off by default because of index size.
+
+[[case]]
+id = "identical-rename"
+family = "metadata strip / rename"
+tier = "detect"
+transform = "copy"
+description = "Byte-identical file with a different name and stripped metadata"
+min_overlap = 100
+
+[[case]]
+id = "reencode-h265-crf30"
+family = "re-encode"
+tier = "detect"
+transform = "reencode"
+params = { codec = "libx265", crf = 30 }
+description = "Transcode to H.265 at visibly lower quality"
+min_overlap = 60
+
+[[case]]
+id = "container-swap-mkv"
+family = "container swap"
+tier = "detect"
+transform = "container_swap"
+params = { ext = ".mkv" }
+description = "Repackaged mp4 -> mkv without re-encoding"
+min_overlap = 60
+
+[[case]]
+id = "trim-12s"
+family = "trimming"
+tier = "detect"
+transform = "trim"
+params = { start = 10.0, duration = 12.0 }
+description = "A 12-second cut from the middle of a corpus file"
+min_overlap = 60
+
+[[case]]
+id = "trim-arbitrary-phase"
+family = "trimming"
+tier = "detect"
+transform = "trim"
+params = { start = 10.37, duration = 12.0 }
+description = "A cut at an arbitrary sub-second point (sampling grids misaligned)"
+min_overlap = 60
+
+[[case]]
+id = "splice-15s-plus-other"
+family = "splicing"
+tier = "detect"
+transform = "splice"
+params = { a_seconds = 15.0 }
+description = "15 s of corpus footage spliced with unrelated footage"
+min_overlap = 20
+
+[[case]]
+id = "merge-two-same"
+family = "reassembly (one master)"
+tier = "detect"
+transform = "merge_segments"
+params = { segments = [[2.37, 18.0], [35.63, 18.0]] }
+description = "Two non-adjacent pieces of one master concatenated and sold as a new session"
+min_overlap = 80
+expect_segments = 2
+
+[[case]]
+id = "merge-two-masters"
+family = "concatenation (two owned files)"
+tier = "detect"
+transform = "merge_two_masters"
+description = "Pieces of two different owned masters concatenated into one offer"
+min_overlap = 80
+expect_segments = 2
+
+[[case]]
+id = "merge-owned-plus-new"
+family = "concatenation (owned + new)"
+tier = "detect"
+transform = "merge_owned_plus_new"
+description = "Owned footage concatenated with genuinely new footage; only the owned half should count"
+min_overlap = 35
+max_overlap = 70
+
+[[case]]
+id = "speed-0.5x"
+family = "speed change (slowdown)"
+tier = "detect"
+transform = "speed"
+params = { factor = 0.5 }
+description = "Slowed to half speed - the billable-hours inflation trick"
+min_overlap = 60
+expect_slowdown = true
+
+[[case]]
+id = "speed-2x"
+family = "speed change (speedup)"
+tier = "detect"
+transform = "speed"
+params = { factor = 2.0 }
+description = "Sped up to double speed"
+min_overlap = 60
+
+[[case]]
+id = "hflip"
+family = "horizontal flip"
+tier = "detect"
+transform = "hflip"
+description = "Mirrored left-right"
+min_overlap = 60
+expect_mirrored = true
+
+# Crop is caught by indexing crop variants of every corpus frame (config
+# index.crop_ladder / index.crop_edges). Rungs sit 6% apart because a 3% scale
+# mismatch costs ~22-38 of 256 bits and 6% costs ~60 (measured,
+# docs/architecture.md). The default is the "mild" preset - one centred rung and
+# one bottom rung - so rows testing deeper coverage name the ladder they need.
+[[case]]
+id = "crop-5pct"
+family = "crop (slight)"
+tier = "detect"
+transform = "crop"
+params = { keep = 0.95 }
+description = "Center crop keeping 95% of each dimension, upscaled back"
+min_overlap = 50
+
+[[case]]
+id = "crop-15pct"
+family = "crop (moderate)"
+tier = "detect"
+transform = "crop"
+params = { keep = 0.85 }
+index_opts = { crop_ladder = "0.94,0.88,0.82,0.76,0.70" }
+description = "Center crop keeping 85%; needs --preset balanced"
+min_overlap = 50
+expect_cropped = true
+
+[[case]]
+id = "crop-30pct"
+family = "crop (heavy)"
+tier = "detect"
+transform = "crop"
+params = { keep = 0.70 }
+index_opts = { crop_ladder = "0.94,0.88,0.82,0.76,0.70" }
+description = "Center crop keeping 70%; needs --preset balanced"
+min_overlap = 50
+expect_cropped = true
+
+[[case]]
+id = "crop-40pct"
+family = "crop (beyond the ladder)"
+tier = "none"
+transform = "crop"
+params = { keep = 0.60 }
+index_opts = { crop_ladder = "0.94,0.88,0.82,0.76,0.70" }
+description = "Center crop keeping 60% - past the deepest rung of the deepest ladder"
+
+[[case]]
+id = "crop-bottom-15"
+family = "edge crop (bottom strip)"
+tier = "detect"
+transform = "crop_edge"
+params = { side = "bottom", frac = 0.15 }
+index_opts = { crop_edges = "bottom,top" }
+description = "Bottom 15% removed (overlay strip trimmed); needs --crop-edges bottom"
+min_overlap = 50
+expect_cropped = true
+
+[[case]]
+id = "crop-top-10"
+family = "edge crop (top strip)"
+tier = "detect"
+transform = "crop_edge"
+params = { side = "top", frac = 0.10 }
+index_opts = { crop_edges = "bottom,top" }
+description = "Top 10% removed; lands between the 6% and 12% rungs"
+min_overlap = 50
+expect_cropped = true
+
+[[case]]
+id = "crop-bottom-8-default"
+family = "edge crop (thin bottom bar)"
+tier = "detect"
+transform = "crop_edge"
+params = { side = "bottom", frac = 0.08 }
+description = "Bottom 8% removed - a trimmed HUD strip, caught by the default bottom rung"
+min_overlap = 50
+expect_cropped = true
+
+[[case]]
+id = "crop-centre-8-default"
+family = "crop (slight zoom)"
+tier = "detect"
+transform = "crop"
+params = { keep = 0.92 }
+description = "Center crop keeping 92% - caught by the default centred rung"
+min_overlap = 50
+expect_cropped = true
+
+[[case]]
+id = "crop-bottom-default-config"
+family = "edge crop, variants disabled"
+tier = "none"
+transform = "crop_edge"
+params = { side = "bottom", frac = 0.15 }
+description = "Bottom 15% removed - deeper than the default bottom rung reaches"
+
+[[case]]
+id = "letterbox-15pct"
+family = "letterbox / aspect change"
+tier = "detect"
+transform = "letterbox"
+params = { bar_frac = 0.15 }
+description = "15% black bars top and bottom"
+min_overlap = 50
+
+[[case]]
+id = "watermark-corner"
+family = "watermark / overlay"
+tier = "detect"
+transform = "watermark"
+description = "Corner text overlay at 60% opacity"
+min_overlap = 60
+
+[[case]]
+id = "colorgrade"
+family = "color grading"
+tier = "detect"
+transform = "colorgrade"
+description = "Saturation +40%, gamma 1.15, brightness and contrast shifts"
+min_overlap = 60
+
+[[case]]
+id = "fps-resample-15"
+family = "frame-rate resample"
+tier = "detect"
+transform = "fps_resample"
+params = { fps = 15 }
+description = "Resampled from 24 fps to 15 fps"
+min_overlap = 60
+
+[[case]]
+id = "launder-mcap"
+family = "cross-format laundering"
+tier = "detect"
+transform = "launder_mcap"
+description = "Footage re-wrapped as an MCAP camera topic (or extracted from one)"
+min_overlap = 60
+
+[[case]]
+id = "unrelated-footage"
+family = "false-positive control"
+tier = "none"
+transform = "unrelated"
+description = "Entirely different footage must not match"
+
+[[case]]
+id = "same-scene-different-view"
+family = "false-positive control (same room)"
+tier = "none"
+transform = "same_scene_other_view"
+description = "Same environment and camera rig, a different part of the scene - must not match"
+
+[[case]]
+id = "clip-below-floor"
+family = "short clips (documented floor)"
+tier = "none"
+transform = "trim"
+params = { start = 5.0, duration = 6.0 }
+description = "Clips shorter than the 10 s evidence floor are not detected"

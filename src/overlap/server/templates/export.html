@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% set active = 'export' %}
+{% block title %}overlap - export{% endblock %}
+{% block content %}
+<h1>Export a manifest</h1>
+<p class="hint">Creates a compact <code>.olm</code> fingerprint manifest of your
+indexed corpus to send to a counterparty. It contains fingerprints and file
+metadata - never frames or pixels. Fingerprints still reveal coarse visual
+structure, so treat manifests as confidential business documents.</p>
+
+{% if not stats.exists %}
+<p class="empty">Nothing indexed yet - <a href="/index">index your corpus</a> first.</p>
+{% else %}
+<form id="export-form">
+  <label>Label (optional, embedded in the manifest)</label>
+  <input type="text" name="label" placeholder="Q3 kitchen teleop offer">
+  <label class="inline"><input type="checkbox" name="anonymize">
+    anonymize file names (pre-sale manifests)</label>
+  <button type="submit">Build manifest</button>
+</form>
+<div id="result" class="hint"></div>
+
+<script>
+document.getElementById("export-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const res = await fetch("/api/v1/export", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      label: form.label.value || null,
+      anonymize_paths: form.anonymize.checked,
+    }),
+  });
+  const out = document.getElementById("result");
+  if (!res.ok) { out.textContent = (await res.json()).detail || res.statusText; return; }
+  const doc = await res.json();
+  out.innerHTML = "Built <strong>" + doc.name + "</strong>: " + doc.files +
+    " files, " + doc.hours + " h, " + (doc.bytes / 1e6).toFixed(1) +
+    " MB - <a href='" + doc.download + "'>download</a>";
+});
+</script>
+{% endif %}
+{% endblock %}

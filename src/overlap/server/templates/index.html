@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% set active = 'index' %}
+{% block title %}overlap - index{% endblock %}
+{% block content %}
+<h1>Index footage</h1>
+<p class="hint">Paths are read <em>on this machine</em> (the one running
+<code>overlap ui</code>) - point at the directories where your recordings live.
+Indexing is resumable; already-indexed files are skipped.</p>
+
+<form id="index-form">
+  <label>Paths (one per line)</label>
+  <textarea name="paths" rows="4" placeholder="D:\datasets\teleop-batch-7&#10;\\nas\captures\2026-08"></textarea>
+  <label class="inline"><input type="checkbox" name="reindex"> re-fingerprint unchanged files</label>
+  <button type="submit">Start indexing</button>
+</form>
+
+<div id="job-panel" hidden>
+  <h2>Progress</h2>
+  <pre id="job-log" class="log"></pre>
+</div>
+
+<script>
+document.getElementById("index-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const form = e.target;
+  const paths = form.paths.value.split("\n").map(s => s.trim()).filter(Boolean);
+  if (!paths.length) return;
+  const res = await fetch("/api/v1/jobs/index", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({paths: paths, reindex: form.reindex.checked}),
+  });
+  if (!res.ok) { alert((await res.json()).detail || res.statusText); return; }
+  const {job_id} = await res.json();
+  const panel = document.getElementById("job-panel");
+  const log = document.getElementById("job-log");
+  panel.hidden = false;
+  log.textContent = "job " + job_id + " started\n";
+  const es = new EventSource("/api/v1/jobs/" + job_id + "/events");
+  es.onmessage = (ev) => { append(JSON.parse(ev.data)); };
+  ["start", "file", "summary", "stage", "ann", "job_end"].forEach(name =>
+    es.addEventListener(name, (ev) => append(JSON.parse(ev.data))));
+  function append(data) {
+    if (data.event === "file") {
+      log.textContent += data.status + "  " + data.path + "\n";
+    } else if (data.event === "summary") {
+      log.textContent += "done: " + data.indexed + " indexed, " +
+        data.skipped + " skipped, " + data.errors + " errors\n";
+    } else if (data.event === "job_end") {
+      log.textContent += "job finished: " + data.status + "\n";
+      es.close();
+    } else {
+      log.textContent += JSON.stringify(data) + "\n";
+    }
+    log.scrollTop = log.scrollHeight;
+  }
+});
+</script>
+{% endblock %}

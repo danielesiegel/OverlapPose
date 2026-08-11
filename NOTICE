@@ -1,0 +1,10 @@
+overlap
+Copyright 2026 World Archive
+
+This product includes software developed at World Archive.
+
+The PDQ perceptual hash algorithm implemented in src/overlap/hashing/ was
+designed and published by Meta Platforms, Inc. as part of the ThreatExchange
+project (https://github.com/facebook/ThreatExchange), released under the
+BSD License. This project contains an independent implementation of the
+published algorithm specification.

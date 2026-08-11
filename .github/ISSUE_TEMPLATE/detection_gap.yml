@@ -1,0 +1,47 @@
+name: Detection gap
+description: A manipulated file matched or failed to match contrary to the detection matrix
+labels: [detection-gap]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        These are the most valuable reports this project receives: they feed
+        directly into new rows of the executable detection matrix.
+  - type: input
+    id: matrix-row
+    attributes:
+      label: Related detection matrix row
+      description: Row id from `tests/detection_matrix.toml` (e.g. `speed-0.5x`), or "none" if this is an unlisted manipulation.
+    validations:
+      required: true
+  - type: dropdown
+    id: direction
+    attributes:
+      label: Direction of the gap
+      options:
+        - "Missed match: a manipulated copy was NOT detected but the matrix says it should be"
+        - "False positive: unrelated footage WAS reported as matching"
+        - "Under-claim: something marked best-effort/not-detected actually detects reliably"
+    validations:
+      required: true
+  - type: textarea
+    id: base
+    attributes:
+      label: Base footage characteristics
+      description: Container, codec, resolution, duration, camera type, scene type (e.g. static tabletop vs moving ego).
+    validations:
+      required: true
+  - type: textarea
+    id: manipulation
+    attributes:
+      label: Manipulation applied
+      description: Exactly what transform (tool + parameters if known, e.g. `ffmpeg -vf setpts=2.0*PTS`).
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Expected vs actual
+      description: What tier did you expect, what did the report say (paste the relevant report JSON snippet if possible).
+    validations:
+      required: true
