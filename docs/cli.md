@@ -47,9 +47,23 @@ Write a `.ovlm` manifest of the indexed corpus. Options: `-o PATH`,
 manifests), `--stride N` (0 = auto: stride to ~1 fps; pass 1 for full density,
 which is what a manifest meant to be *imported* needs - see below).
 
+`--only PREFIX` (repeatable) exports only files whose path starts with that
+prefix; `--only-from FILE` reads prefixes one per line. Without either, the whole
+index is exported. Use it to quote one dataset out of a mixed inventory without
+keeping a separate index per sellable unit, and to carve a subset out of a large
+corpus for a buyer. A prefix that matches nothing is an error rather than an
+empty manifest. The subset is a normal manifest with its own Merkle root - it
+describes the subset, and cannot be passed off as the parent corpus.
+
+```
+overlap export -o kitchen-only.ovlm --only teleop-2026q3/kitchen/ --stride 1
+```
+
 `--split-gb N` writes a directory of parts of about N GB each instead of one
 file, splitting on file boundaries so every part is a complete readable manifest
-and can be fetched or re-fetched on its own. Needed past a few GB: at 4 fps,
+and can be fetched or re-fetched on its own. Each entry in `parts.json` records
+`first_relpath`/`last_relpath` and the directory `prefixes` it spans, so a
+consumer can tell which part holds a given file instead of guessing. Needed past a few GB: at 4 fps,
 96,000 hours of fingerprints is ~44 GB, more than most hosts will serve as a
 single object. A `parts.json` records each part with its digest, and every part
 carries the whole set's Merkle root so a subset cannot be passed off as the

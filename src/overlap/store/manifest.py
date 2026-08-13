@@ -40,6 +40,7 @@ from overlap.hashing.base import HASH_BYTES
 from overlap.ingest.merkle import merkle_root, sha256_file
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from pathlib import Path
 
     from overlap.store.catalog import Catalog
@@ -102,10 +103,15 @@ def export_manifest(
     anonymize_paths: bool = False,
     stride: int = 1,
     target_fps: float | None = None,
+    only: Sequence[str] | None = None,
 ) -> Manifest:
-    """Build a manifest from every ``done`` file in the catalog and write it."""
+    """Build a manifest from every ``done`` file in the catalog and write it.
+
+    ``only`` restricts it to files under the given relpath prefixes.
+    """
     manifest, _stream_ids = build_manifest(
         catalog,
+        only=only,
         label=label,
         anonymize_paths=anonymize_paths,
         stride=stride,
@@ -122,8 +128,12 @@ def build_manifest(
     anonymize_paths: bool = False,
     stride: int = 1,
     target_fps: float | None = None,
+    only: Sequence[str] | None = None,
 ) -> tuple[Manifest, list[int]]:
     """Build an in-memory manifest from the catalog.
+
+    ``only`` restricts the manifest to files whose relpath starts with one of the
+    given prefixes; ``None`` means every ``done`` file.
 
     Also returns the catalog stream_id behind each manifest stream (same
     order), which self-comparison needs to exclude trivial self-matches.
@@ -141,6 +151,20 @@ def build_manifest(
     files: list[ManifestFile] = []
     file_idx_by_id: dict[int, int] = {}
     rows = [r for r in catalog.file_rows() if r["status"] == "done"]
+    if only is not None:
+        # Selecting a subset is a first-class need, not a convenience: a vendor
+        # quoting one dataset out of a mixed inventory would otherwise have to
+        # keep a separate index per sellable unit, and a corpus holder cannot
+        # carve out a slice to hand a buyer without re-indexing it.
+        prefixes = tuple(only)
+        if not prefixes:
+            raise ManifestError("--only given no paths to select")
+        rows = [r for r in rows if str(r["relpath"]).startswith(prefixes)]
+        if not rows:
+            raise ManifestError(
+                f"no done files match any of: {', '.join(prefixes[:5])}"
+                + (" ..." if len(prefixes) > 5 else "")
+            )
     for row in sorted(rows, key=lambda r: str(r["relpath"])):
         relpath = str(row["relpath"])
         sha = bytes(row["sha256"])
@@ -331,6 +355,7 @@ def export_manifest_split(
     stride: int = 1,
     target_fps: float | None = None,
     part_bytes: int = 1_500_000_000,
+    only: Sequence[str] | None = None,
 ) -> list[Path]:
     """Write a manifest as a directory of parts, each a complete manifest itself.
 
@@ -350,6 +375,7 @@ def export_manifest_split(
         anonymize_paths=anonymize_paths,
         stride=stride,
         target_fps=target_fps,
+        only=only,
     )
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -382,6 +408,14 @@ def export_manifest_split(
         path = out_dir / f"part-{seq:05d}{SUFFIX}"
         _write(part, path)
         written.append(path)
+        # Record which files a part covers, or the split is unaddressable: a
+        # consumer holding parts.json could see sizes and digests but had no way
+        # to ask "which part contains this archive?", so importing a subset only
+        # worked by luck. Files are sorted by relpath, so the first and last name
+        # bound the part; `prefixes` lists the common directories it spans, which
+        # is what someone selecting by dataset or archive actually matches on.
+        names = [f.relpath for f in part.files]
+        prefixes = sorted({n.rsplit("/", 1)[0] for n in names if "/" in n})
         entries.append(
             {
                 "name": path.name,
@@ -390,6 +424,12 @@ def export_manifest_split(
                 "files": len(part.files),
                 "streams": len(part.streams),
                 "hours": round(part.total_hours, 3),
+                "first_relpath": names[0] if names else None,
+                "last_relpath": names[-1] if names else None,
+                # Bounded so parts.json stays small on corpora with many
+                # directories; the first/last pair still bounds the part exactly.
+                "prefixes": prefixes if len(prefixes) <= 256 else prefixes[:256],
+                "prefixes_truncated": len(prefixes) > 256,
             }
         )
 

@@ -124,3 +124,41 @@ def test_size_cap_enforced(catalog: Catalog, tmp_path: Path) -> None:
     export_manifest(catalog, out)
     with pytest.raises(ManifestError, match="size limit"):
         read_manifest(out, max_bytes=10)
+
+
+def test_only_selects_a_subset_and_reads_back(catalog: Catalog, tmp_path: Path) -> None:
+    """A subset must be a real manifest, not a truncated one."""
+    full = export_manifest(catalog, tmp_path / "full.ovlm")
+    subset = export_manifest(catalog, tmp_path / "sub.ovlm", only=["a_"])
+    assert [f.relpath for f in full.files] == ["a_first.mp4", "b_second.mp4"]
+    assert [f.relpath for f in subset.files] == ["a_first.mp4"]
+    # It describes the subset, so it must not inherit the parent's root - that is
+    # what stops a slice being passed off as the whole corpus.
+    assert subset.merkle_root != full.merkle_root
+    loaded = read_manifest(tmp_path / "sub.ovlm")
+    assert [f.relpath for f in loaded.files] == ["a_first.mp4"]
+    assert loaded.total_frames == 30
+
+
+def test_only_matching_nothing_is_an_error_not_an_empty_manifest(
+    catalog: Catalog, tmp_path: Path
+) -> None:
+    with pytest.raises(ManifestError, match="no done files match"):
+        export_manifest(catalog, tmp_path / "none.ovlm", only=["no_such_prefix/"])
+
+
+def test_parts_index_records_coverage(catalog: Catalog, tmp_path: Path) -> None:
+    """parts.json must say which files a part holds, or a subset is unaddressable."""
+    import json
+
+    from overlap.store.manifest import PARTS_INDEX, export_manifest_split
+
+    out = tmp_path / "parts"
+    export_manifest_split(catalog, out, part_bytes=1)  # 1 byte => one file per part
+    index = json.loads((out / PARTS_INDEX).read_text(encoding="utf-8"))
+    assert len(index["parts"]) == 2
+    firsts = [p["first_relpath"] for p in index["parts"]]
+    lasts = [p["last_relpath"] for p in index["parts"]]
+    assert firsts == ["a_first.mp4", "b_second.mp4"]
+    assert lasts == ["a_first.mp4", "b_second.mp4"]
+    assert all("prefixes" in p and p["prefixes_truncated"] is False for p in index["parts"])

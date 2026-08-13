@@ -11,6 +11,18 @@ patch versions never make them. Pin an exact version if you depend on this.
 
 ## [Unreleased]
 
+### Added
+
+- **`overlap export --only PREFIX` / `--only-from FILE`** exports a subset of the
+  index instead of all of it. Without this a vendor with a mixed inventory had to
+  keep a separate index per sellable dataset, and a corpus holder could not carve
+  out a slice for a buyer without re-indexing it. A prefix matching nothing is an
+  error, not an empty manifest; the subset carries its own Merkle root.
+- **`parts.json` entries now record `first_relpath`, `last_relpath` and the
+  directory `prefixes` each part spans.** Parts were readable individually but not
+  addressable: the index recorded only sizes and digests, so "which part contains
+  this archive?" was unanswerable and partial import worked only by luck.
+
 ### Changed - breaking
 
 - **Fingerprint is now `pdq2`** (256x256 working resolution in float32). `pdq1`

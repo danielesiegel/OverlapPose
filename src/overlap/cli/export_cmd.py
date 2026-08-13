@@ -40,6 +40,20 @@ def export_cmd(
             "but manifests only need ~1 fps to be found)."
         ),
     ),
+    only: list[str] = typer.Option(
+        [],
+        "--only",
+        help=(
+            "Export only files whose path starts with this prefix. Repeatable. "
+            "Without it the whole index is exported, which forces a vendor with a "
+            "mixed inventory to keep a separate index per sellable dataset."
+        ),
+    ),
+    only_from: Path | None = typer.Option(
+        None,
+        "--only-from",
+        help="File of path prefixes, one per line (blank lines and # comments ignored).",
+    ),
     split_gb: float = typer.Option(
         0.0,
         "--split-gb",
@@ -66,11 +80,23 @@ def export_cmd(
     out = output or Path(default_name + ("" if split_gb else SUFFIX))
     # stride 0 = auto: thin each stream to ~1 fps regardless of the rate it was
     # indexed at, so mixed-rate corpora export uniformly.
+    selectors = list(only)
+    if only_from is not None:
+        if not only_from.is_file():
+            raise typer.BadParameter(f"no such file: {only_from}")
+        selectors += [
+            ln.strip()
+            for ln in only_from.read_text(encoding="utf-8").splitlines()
+            if ln.strip() and not ln.lstrip().startswith("#")
+        ]
+    if (only or only_from) and not selectors:
+        raise typer.BadParameter("--only/--only-from selected nothing")
     shared = {
         "label": label,
         "anonymize_paths": anonymize_paths,
         "stride": max(1, stride),
         "target_fps": 1.0 if stride == 0 else None,
+        "only": selectors or None,
     }
     parts: list[Path] = []
     with Catalog.open(index_dir) as catalog:
