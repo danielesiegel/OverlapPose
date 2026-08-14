@@ -42,6 +42,12 @@ def import_cmd(
     """
     state = get_state(ctx)
     index_dir = state.config.index_dir
+    # An index built only from manifests never passed through `overlap index`,
+    # so nothing had recorded the shard budget and every build fell back to the
+    # 32M default - about 1.3 GB resident per shard. Screening offers against a
+    # published dataset is exactly the case that should run on an ordinary
+    # machine, so the configured budget is recorded here too.
+    shard_codes = int(state.config.get("index.shard_codes"))
 
     def readable(path: Path) -> bool:
         # A manifest may arrive as one file or as a directory of parts; the
@@ -56,7 +62,7 @@ def import_cmd(
 
     added = 0
     hours = 0.0
-    with Catalog.open(index_dir) as catalog:
+    with Catalog.open(index_dir, expected_meta={"shard_codes": str(shard_codes)}) as catalog:
         for path in manifests:
             manifest = read_manifest(path)
             try:

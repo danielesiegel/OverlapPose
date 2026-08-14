@@ -114,6 +114,16 @@ will not be found. And a manifest carries whatever density the exporter chose:
 below 4 fps, recall against re-cut footage drops sharply (see
 docs/architecture.md), so prefer manifests exported with `--stride 1`.
 
+The search build honours `index.shard_codes`, which is what bounds memory when
+the imported footage is later searched: one shard is resident per comparison,
+about 1.3 GB at the 32M default. Lower it to fit a smaller machine - the budget
+is recorded on the index, so it applies to every later comparison without being
+passed again:
+
+```
+OVERLAP_INDEX_SHARD_CODES=4000000 overlap import ./catalog-block1
+```
+
 ### `overlap audit-sample MANIFEST --sample DIR`
 
 Check that a manifest describes the same footage as the sample the seller shared.

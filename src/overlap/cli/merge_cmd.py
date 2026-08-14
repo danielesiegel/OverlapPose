@@ -42,7 +42,11 @@ def merge_cmd(
         raise typer.BadParameter("cannot merge an index into itself")
 
     totals = {"files": 0, "streams": 0, "frames": 0, "skipped": 0}
-    with Catalog.open(index_dir) as target:
+    # Same reasoning as `import`: a target index assembled purely by merging
+    # slices has never been through `overlap index`, so without this its shard
+    # budget would silently be the 32M default rather than the configured one.
+    shard_codes = int(state.config.get("index.shard_codes"))
+    with Catalog.open(index_dir, expected_meta={"shard_codes": str(shard_codes)}) as target:
         for source in sources:
             with Catalog.open(source) as other:
                 # Identity metadata has to be carried over on a first merge into

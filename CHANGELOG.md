@@ -23,6 +23,18 @@ patch versions never make them. Pin an exact version if you depend on this.
   addressable: the index recorded only sizes and digests, so "which part contains
   this archive?" was unanswerable and partial import worked only by luck.
 
+### Fixed
+
+- **`import` and `merge` now record `index.shard_codes`**, so an index built
+  from manifests can be searched on an ordinary machine. The setting bounds peak
+  memory during a comparison - one shard is resident at a time, about 1.3 GB at
+  the 32M default - and is carried on the index itself so a later comparison
+  inherits it. Only `overlap index` wrote it, so an index assembled purely by
+  importing a published catalog, or by merging slices, silently kept the 32M
+  default with no flag or environment variable able to lower it. Screening
+  offers against a dataset nobody owns is precisely the case that should not
+  require a large machine.
+
 ### Changed - breaking
 
 - **Fingerprint is now `pdq2`** (256x256 working resolution in float32). `pdq1`
