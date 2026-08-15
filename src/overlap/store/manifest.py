@@ -28,6 +28,7 @@ import hashlib
 import json
 import os
 import struct
+from collections.abc import Iterator
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
@@ -491,6 +492,127 @@ def read_manifest_parts(index_path: Path) -> list[Path]:
             raise ManifestError(f"part {path.name} does not match its recorded digest")
         paths.append(path)
     return paths
+
+def iter_manifest_streams(
+    path: Path, *, max_bytes: int | None = None
+) -> Iterator[tuple[Manifest, ManifestStream]]:
+    """Yield one stream at a time, without materialising the manifest.
+
+    ``read_manifest`` reads the whole compressed body, copies each section out
+    of it, and decompresses the frames in full - three copies of a payload that
+    is 1.5 GB per part on a large catalog, so importing one part needed over
+    3 GB and was killed on any ordinary machine.
+
+    This reads only the two small tables eagerly and then walks ``frames.bin``
+    through a streaming decompressor, handing back each stream as it appears.
+    Peak memory becomes the file table plus one stream, so importing a corpus is
+    bounded by its largest *stream* rather than by its largest *part*.
+
+    The first element of each pair is the same header-only Manifest object every
+    time, so a caller can read algo_id/merkle_root without waiting for the walk.
+    """
+    size = path.stat().st_size
+    if max_bytes is not None and size > max_bytes:
+        raise ManifestError(f"manifest exceeds size limit ({size} > {max_bytes} bytes)")
+
+    with path.open("rb") as fh:
+        if fh.read(4) != MAGIC:
+            raise ManifestError(f"{path} is not an overlap manifest (bad magic)")
+        version, header_len = struct.unpack("<HI", fh.read(6))
+        if version != FORMAT_VERSION:
+            raise ManifestError(
+                f"manifest format v{version} is not supported by this build "
+                f"(need v{FORMAT_VERSION})"
+            )
+        if header_len > _MAX_HEADER:
+            raise ManifestError("manifest header implausibly large")
+        try:
+            header = json.loads(fh.read(header_len).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ManifestError(f"corrupt manifest header: {exc}") from exc
+        body_at = 10 + header_len
+
+        try:
+            sections = {s["name"]: s for s in header["sections"]}
+        except Exception as exc:  # noqa: BLE001
+            raise ManifestError(f"malformed manifest {path}: {exc}") from exc
+
+        def section(name: str) -> tuple[int, int, int]:
+            sec = sections[name]
+            lo, ln, raw = int(sec["offset"]), int(sec["len"]), int(sec["raw_len"])
+            if lo < 0 or ln < 0 or raw > _MAX_SECTION or body_at + lo + ln > size:
+                raise ManifestError(f"section {name} out of bounds")
+            return lo, ln, raw
+
+        def load(name: str) -> bytes:
+            lo, ln, raw = section(name)
+            fh.seek(body_at + lo)
+            blob = fh.read(ln)
+            if hashlib.sha256(blob).hexdigest() != sections[name]["sha256"]:
+                raise ManifestError(f"section {name} failed integrity check")
+            return zstandard.ZstdDecompressor().decompress(blob, max_output_size=raw)
+
+        try:
+            files = [
+                ManifestFile(relpath=str(r), size=int(sz), sha256=bytes(sha), container=str(c))
+                for r, sz, sha, c in msgpack.unpackb(load("files.msgpack"), raw=False)
+            ]
+            stream_rows = msgpack.unpackb(load("streams.msgpack"), raw=False)
+
+            manifest = Manifest(
+                algo_id=str(header["algo_id"]),
+                prep_id=str(header["prep_id"]),
+                sample_fps=float(header["sample_fps"]),
+                label=header.get("label"),
+                merkle_root=bytes.fromhex(header["dataset"]["merkle_root"]),
+                tool_version=str(header.get("tool", "")),
+                files=files,
+            )
+
+            frames_lo, frames_len, frames_raw = section("frames.bin")
+            fh.seek(body_at + frames_lo)
+            reader = zstandard.ZstdDecompressor().stream_reader(fh, read_size=1 << 20)
+
+            consumed = 0
+
+            def take(count: int) -> bytes:
+                nonlocal consumed
+                if consumed + count > frames_raw:
+                    raise ManifestError("frames section truncated")
+                buf = reader.read(count)
+                if len(buf) != count:
+                    raise ManifestError("frames section truncated")
+                consumed += count
+                return buf
+
+            for row in stream_rows:
+                fi, key, codec, w, h, dur, fps, n = row
+                fi, n = int(fi), int(n)
+                if not (0 <= fi < len(files)) or n < 0:
+                    raise ManifestError("stream row out of bounds")
+                yield manifest, ManifestStream(
+                    file_idx=fi,
+                    stream_key=str(key),
+                    codec=str(codec),
+                    width=int(w),
+                    height=int(h),
+                    duration_ms=int(dur),
+                    sample_fps=float(fps),
+                    n_frames=n,
+                    hashes=take(n * HASH_BYTES),
+                    qualities=take(n),
+                    flags=take(n),
+                )
+
+            if consumed != frames_raw:
+                raise ManifestError("frames section has trailing bytes")
+        except ManifestError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - anything else is a malformed file
+            raise ManifestError(
+                f"malformed manifest {path}: {type(exc).__name__}: {exc}"
+            ) from exc
+
 
 
 def read_manifest(path: Path, *, max_bytes: int | None = None) -> Manifest:

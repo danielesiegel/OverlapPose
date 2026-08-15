@@ -10,8 +10,8 @@ from overlap.cli._console import emit, get_state
 from overlap.errors import IndexError_
 from overlap.store.annindex import AnnIndex, describe_index
 from overlap.store.catalog import Catalog
-from overlap.store.ingest_manifest import import_manifest
-from overlap.store.manifest import PARTS_INDEX, read_manifest
+from overlap.store.ingest_manifest import import_manifest_streaming
+from overlap.store.manifest import PARTS_INDEX
 
 
 def import_cmd(
@@ -64,24 +64,28 @@ def import_cmd(
     hours = 0.0
     with Catalog.open(index_dir, expected_meta={"shard_codes": str(shard_codes)}) as catalog:
         for path in manifests:
-            manifest = read_manifest(path)
+            # Streamed rather than read whole: a part of a large published
+            # catalog carries ~1.5 GB of frames, and decoding one in full needed
+            # over 3 GB. inspect() still reads the header for the summary below.
             try:
-                n = import_manifest(manifest, catalog, label=label or manifest.label or path.stem)
+                summary = import_manifest_streaming(path, catalog, label=label or path.stem)
             except IndexError_ as exc:
                 state.err.print(f"[red]{path}: {exc}[/red]")
                 raise typer.Exit(code=1) from exc
+            n = int(summary["added"])
             added += n
-            hours += manifest.total_hours
+            hours += float(summary["hours"])
+            fps = float(summary["sample_fps"])
             if not state.quiet and not state.json_mode:
-                skipped = len(manifest.files) - n
+                skipped = int(summary["n_files"]) - n
                 state.err.print(
-                    f"{path.name}: +{n} files, {manifest.total_hours:,.1f} h at "
-                    f"{manifest.sample_fps:g} fps"
+                    f"{path.name}: +{n} files, {summary['hours']:,.1f} h at "
+                    f"{fps:g} fps"
                     + (f" ({skipped} already present)" if skipped else "")
                 )
-            if manifest.sample_fps < 4.0 and not state.quiet:
+            if fps and fps < 4.0 and not state.quiet:
                 state.err.print(
-                    f"[yellow]{path.name} was exported at {manifest.sample_fps:g} fps. "
+                    f"[yellow]{path.name} was exported at {fps:g} fps. "
                     f"Measured against re-cut and transcoded footage, a 1 fps corpus "
                     f"recovers 40% of what 4 fps recovers - ask for a denser export if "
                     f"this footage matters.[/yellow]"
