@@ -51,7 +51,9 @@ def codes(x: np.ndarray, rate: float) -> np.ndarray:
     win = int(round(WINDOW_S * rate))
     hop = int(round(HOP_S * rate))
     starts = np.arange(0, x.shape[1] - win + 1, hop)
-    return np.array([np.frombuffer(kernel.hash_frame(x[:, s : s + win]).hash, "u1") for s in starts])
+    return np.array(
+        [np.frombuffer(kernel.hash_frame(x[:, s : s + win]).hash, "u1") for s in starts]
+    )
 
 
 def dist(a: np.ndarray, b: np.ndarray) -> np.ndarray:
