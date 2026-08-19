@@ -1,3 +1,101 @@
+# OverlapPose
+
+<p align="center"><img src="docs/assets/overlappose_hero.png" width="760" alt="pose stream to perceptual fingerprint"></p>
+
+**A fork of [World-Archive/overlap](https://github.com/World-Archive/overlap) that extends
+its perceptual fingerprinting to proprioceptive data: pose trajectories, joint/IMU
+channels, and motion streams stored as Parquet.** Everything the original does for
+video, MCAP and ROS bags is unchanged and still works; this fork adds a second
+modality beside it.
+
+## What changed from the original
+
+The original hashes decoded video frames with a PDQ-style image hash (`pdq2`).
+What makes that hash robust is not anything image-specific - it is the recipe:
+normalize, project onto a small low-frequency basis, threshold every coefficient
+at the median, compare by Hamming distance. OverlapPose applies the same recipe
+directly to signal data with a new kernel, `sdq1`:
+
+- **A Parquet reader** picks up files shaped one-row-per-sample with a time
+  column (`time_ms`/`time_us`) and dense numeric channels - the common export
+  shape for mocap landmarks, joint states and IMU logs. Sparse side-channels
+  (mostly-NaN columns, e.g. 5 Hz UWB fixes inside a 1 kHz log) are excluded
+  automatically; text label columns are metadata, not evidence, and are ignored.
+- **The `sdq1` kernel** takes 1-second windows of all channels on the same fixed
+  time grid the video path samples frames on, resamples each window to a fixed
+  length (so the hash is independent of the native sample rate), takes a 16x16
+  low-frequency 2-D DCT over channels x time, and thresholds at the median:
+  256 bits per window, 32 bytes - the same shape as an image hash. Per-channel
+  robust scaling makes it invariant to unit changes and calibration offsets by
+  construction; excluding the time-DC kills constant biases.
+- **The matcher is untouched.** Segment chaining, trim/splice localization and
+  the report pipeline only ever see 32-byte codes on a time grid, so they work
+  on signal data as-is. Time-*reversed* copies are caught through the same slot
+  the video path uses for mirrored copies.
+- Image and signal hashes carry separate identities (`pdq2`/`sdq1`); one index
+  can hold both, manifests declare which one they carry, and a mismatch is
+  refused rather than guessed at - same policy as upstream.
+
+## Using it
+
+```
+pip install 'overlap-cli[pose]'      # adds pyarrow; from this fork's checkout: uv sync
+
+overlap index /data/mocap            # .parquet files are picked up next to videos
+overlap export -o offer.ovlm         # pose-only manifests declare sdq1 in the header
+overlap compare offer.ovlm           # same flow, same report, same exit codes
+```
+
+There is nothing pose-specific to configure: the reader recognizes time-series
+Parquet by its schema, one file becomes one `proprio` stream, and the usual
+vendor/lab workflow (index, self-dedupe, export, compare, verify) applies.
+
+## Measured confidence and data rate
+
+Numbers below are measured on real data (22-joint humanoid, 132 dense IMU
+channels at 1 kHz plus 66 landmark channels at 60 Hz, ~64 minutes total;
+reproduce with [`benchmarks/bench_sdq_noise.py`](benchmarks/bench_sdq_noise.py)). Unrelated 1 s windows disagree by
+**128 +/- 10 of 256 bits** - the binomial floor - so a per-window match
+threshold of 64 bits sits 6.3 sigma below the noise floor (about 1e-10 per
+pair), and the matcher additionally requires seconds of consecutive agreeing
+windows before it reports anything.
+
+Gaussian noise added to the raw samples, sigma as a fraction of each channel's
+signal spread (bit flips out of 256, same window):
+
+| noise sigma | 1% | 5% | 10% | 20% | 50% | 100% |
+|---|---|---|---|---|---|---|
+| mean bits flipped | 0.8 | 3.6 | 7.2 | 13.4 | 30.1 | 50.0 |
+| margin below floor | 12.7σ | 12.5σ | 12.1σ | 11.5σ | 9.8σ | 7.8σ |
+
+For scale: 5% of signal spread is already ~30x the sensor's own noise floor for
+a kHz MEMS IMU (ICM-42688 class). There is no noise level that defeats the hash
+and leaves the data sellable - at sigma = 100% the copy is destroyed as a
+product and still matches at 7 sigma confidence.
+
+End-to-end check, run through the real CLI: a copy of a 2-minute 1 kHz IMU
+recording with **10% Gaussian noise added and the first 30 seconds trimmed off**
+comes back as a strong match (mean distance 10.0 bits, confidence 0.9999,
+speed 1.0x) with the trim localized to sub-second accuracy - and an unrelated
+file in the same offer correctly matches nothing.
+
+Data rate: fingerprints cost about **0.9 MB per hour** in the local index and
+about **130 KB per hour** in an exported manifest (4 windows/s indexed, ~1/s
+exported - the same 32-byte codes and manifest format as upstream). Indexing
+~64 minutes of mixed-rate proprio data takes about a second.
+
+**Honest limits:** resampled / speed-changed signal copies are *not* detected
+yet - a windowed signal hash is not speed-invariant (measured: a 2% resample
+lands at the unrelated floor). The fix is the signal analog of the image crop
+ladder (indexing each window at a few resample rates); until it lands, treat
+speed manipulation of signal data as out of scope. Aligned text labels are
+carried nowhere: labels are cheap to edit, the signal is the evidence.
+
+Everything below is the original README; all of it still applies to the video
+side, unchanged.
+
+---
+
 # overlap
 
 **Perceptual fingerprinting and overlap detection for robotics datasets. Local-only.**
