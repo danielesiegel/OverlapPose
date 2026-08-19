@@ -24,15 +24,19 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class StreamInfo:
-    """One visual stream within a container (a video track or a camera topic)."""
+    """One stream within a container (a video track, a camera topic, or a
+    dense proprioceptive signal block)."""
 
     stream_key: str  # "v0" for video tracks; topic name for robotics containers
     codec: str
-    width: int
-    height: int
+    width: int  # image width; channel count for signal streams
+    height: int  # image height; native sample rate (Hz) for signal streams
     native_fps: float | None
     duration_ms: int | None
     n_messages: int | None = None  # message count where the container knows it
+    # "image" streams yield HxW/HxWx3 uint8 frames and are hashed with pdq2;
+    # "signal" streams yield C x T float windows and are hashed with sdq1.
+    modality: str = "image"
 
 
 class FrameSample(NamedTuple):

@@ -31,6 +31,7 @@ from overlap.hashing import (
 )
 from overlap.hashing.pdq_numpy import unpack_bits
 from overlap.hashing.prep import BORDER_PROBE_FRAMES
+from overlap.hashing.sdq import SIGNAL_PREP_ID, SdqKernel
 from overlap.ingest.merkle import sha256_file
 from overlap.ingest.model import FileResult, StreamResult
 from overlap.readers import SamplePolicy, reader_for, supported_extensions
@@ -148,6 +149,8 @@ def _fingerprint_stream(
     crop_variants: tuple[CropVariant, ...] = (),
 ) -> StreamResult | None:
     """Decode-sample-prep-hash one stream; None when it yields no frames."""
+    if getattr(info, "modality", "image") == "signal":
+        return _fingerprint_signal_stream(session, info, sample_fps)
     policy = SamplePolicy(fps=sample_fps)
     samples: Iterator[Any] = session.sample(info.stream_key, policy)
 
@@ -225,6 +228,53 @@ def _fingerprint_stream(
     )
 
 
+def _fingerprint_signal_stream(session: Any, info: Any, sample_fps: float) -> StreamResult | None:
+    """Sample-hash one signal stream (proprioceptive windows, sdq1 kernel).
+
+    No image prep applies: the reader already did sp1 normalization (which,
+    like the border crop, needs whole-stream statistics), and crop geometry
+    has no signal analog, so no crop variants are hashed.
+    """
+    kernel = SdqKernel()
+    hashes: list[bytes] = []
+    mirrors: list[bytes] = []
+    qualities = bytearray()
+    flags = bytearray()
+    votes = np.zeros(256, dtype=np.int32)
+    n = 0
+    last_t_ms = 0
+    for t_ms, window in session.sample(info.stream_key, SamplePolicy(fps=sample_fps)):
+        fh = kernel.hash_frame(window)
+        hashes.append(fh.hash)
+        mirrors.append(fh.mirror)
+        qualities.append(fh.quality)
+        flags.append(fh.flags)
+        votes[unpack_bits(fh.hash)] += 1
+        last_t_ms = t_ms
+        n += 1
+    if n == 0:
+        return None
+    sketch = np.packbits((votes * 2 > n).astype(np.uint8)).tobytes()
+    return StreamResult(
+        stream_key=info.stream_key,
+        codec=info.codec,
+        width=info.width,
+        height=info.height,
+        native_fps=info.native_fps,
+        duration_ms=info.duration_ms or (last_t_ms + int(500 / sample_fps)),
+        sample_fps=sample_fps,
+        algo_id=kernel.algo_id,
+        prep_id=SIGNAL_PREP_ID,
+        border_crop="0,0,0,0",
+        n_frames=n,
+        hashes=b"".join(hashes),
+        mirrors=b"".join(mirrors),
+        qualities=bytes(qualities),
+        flags=bytes(flags),
+        sketch=sketch,
+    )
+
+
 # The "mild" preset (overlap.coverage.PRESETS): one centred rung and one bottom
 # rung, calibrated to the crops that leave footage still sellable. Kept in step
 # with the config defaults; overlap.coverage is the single source for both.
@@ -260,6 +310,11 @@ def index_paths(
     expected_meta = {
         "algo_id": kernel.algo_id,
         "prep_id": PREP_ID,
+        # Signal streams (pose/IMU parquets) carry their own hash identity,
+        # recorded per modality so one index can hold both without mixing
+        # incomparable hashes: every stream row stores which one it used.
+        "signal_algo_id": SdqKernel.algo_id,
+        "signal_prep_id": SIGNAL_PREP_ID,
         "sample_fps": repr(sample_fps),
         "crop_variants": crop_variants_spec(crop_variants),
     }

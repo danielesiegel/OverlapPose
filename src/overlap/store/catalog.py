@@ -129,8 +129,9 @@ class Catalog:
     # -- lifecycle ---------------------------------------------------------
 
     # Settings that change what a hash *means*: mixing them in one index would
-    # make its contents incomparable, so a mismatch is refused.
-    IDENTITY_META = ("algo_id", "prep_id")
+    # make its contents incomparable, so a mismatch is refused. Image and
+    # signal streams have separate identities; each stream row records its own.
+    IDENTITY_META = ("algo_id", "prep_id", "signal_algo_id", "signal_prep_id")
 
     @classmethod
     def open(
@@ -461,6 +462,16 @@ class Catalog:
             self._con.executemany(
                 "DELETE FROM ann_shards WHERE shard=?", [(s,) for s in sorted(shards)]
             )
+
+    def stream_identity(self, stream_id: int) -> tuple[str, str]:
+        """(algo_id, prep_id) a stream was hashed with - per stream, because an
+        index can hold image (pdq2) and signal (sdq1) streams side by side."""
+        row = self._con.execute(
+            "SELECT algo_id, prep_id FROM streams WHERE stream_id=?", (stream_id,)
+        ).fetchone()
+        if row is None:
+            raise IndexError_(f"no stream {stream_id} in catalog")
+        return str(row[0]), str(row[1])
 
     def stream_codec_dims(self, stream_id: int) -> tuple[str, int, int]:
         row = self._con.execute(

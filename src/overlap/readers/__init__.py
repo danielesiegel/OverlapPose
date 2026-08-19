@@ -1,6 +1,6 @@
 """Container readers. Importing this package registers the built-in readers."""
 
-from overlap.readers import mcap_reader, rosbag_reader, video  # noqa: F401
+from overlap.readers import mcap_reader, pose_parquet, rosbag_reader, video  # noqa: F401
 from overlap.readers.base import (
     FrameSample,
     Reader,

@@ -221,6 +221,21 @@ def build_manifest(
             )
         )
 
+    # The header identity must describe the streams the manifest carries, not
+    # the index default: a pose-only manifest says sdq1/sp1 so a consumer that
+    # cannot compare signal hashes refuses it cleanly instead of mis-reading
+    # them as image hashes. Mixing identities in one manifest is refused - the
+    # format has one identity slot, and a silent mix would corrupt comparisons.
+    identities = {catalog.stream_identity(sid) for sid in stream_ids}
+    if len(identities) > 1:
+        pretty = ", ".join(sorted(f"{a}/{p}" for a, p in identities))
+        raise ManifestError(
+            f"selected streams mix hash identities ({pretty}); export image and "
+            f"signal data as separate manifests (use --only to select each subset)"
+        )
+    if identities:
+        algo_id, prep_id = identities.pop()
+
     # Report the density the streams actually carry. Where streams differ, the
     # lowest is the honest headline: it is the density a consumer can rely on
     # finding everywhere.

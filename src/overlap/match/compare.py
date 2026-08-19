@@ -265,6 +265,20 @@ def compare_manifest(
 
 
 def _check_compatibility(manifest: Manifest, catalog: Catalog) -> None:
+    # An index carries one identity per modality: image (algo_id/prep_id) and
+    # signal (signal_algo_id/signal_prep_id). The manifest's single identity
+    # must match one of them exactly; cross-identity frames cannot chain into
+    # segments anyway (measured floor 128 +/- 10 bits against a radius of 56),
+    # but a wrong *version* of either kernel is refused, never approximated.
+    if manifest.algo_id == catalog.get_meta("signal_algo_id"):
+        signal_prep = catalog.get_meta("signal_prep_id")
+        if signal_prep is not None and signal_prep != manifest.prep_id:
+            raise IndexError_(
+                f"signal manifest uses prep_id={manifest.prep_id!r} but this index "
+                f"uses signal_prep_id={signal_prep!r}; both sides must run "
+                f"compatible overlap versions"
+            )
+        return
     for key, manifest_value in (
         ("algo_id", manifest.algo_id),
         ("prep_id", manifest.prep_id),

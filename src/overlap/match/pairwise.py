@@ -57,12 +57,28 @@ def compare_stream_pair(
     pos = positions[keep].astype(np.int64)
     slot = pos // codes_per_frame
     code = pos % codes_per_frame
+    q_rows = rows.astype(np.int64)
+    f_idx = frame_idx[slot].astype(np.int64)
+    mirrored = code % 2 == 1
+    variant = np.clip((code // 2).astype(np.int16), 0, n_rungs)
+    dist = dists[keep].astype(np.int32)
+
+    # A stream indexed with fewer rungs than the ladder repeats its uncropped
+    # code into the padded slots (see stream_codes), so one frame can hit at
+    # several variant indices with the same distance. Keep one hit per
+    # (query, frame, orientation): smallest distance, ties to the lowest
+    # variant - a frame must report "uncropped", not a padded alias of itself.
+    order = np.lexsort((variant, dist, mirrored, f_idx, q_rows))
+    q_o, f_o, m_o = q_rows[order], f_idx[order], mirrored[order]
+    first = np.ones(order.size, dtype=bool)
+    first[1:] = (q_o[1:] != q_o[:-1]) | (f_o[1:] != f_o[:-1]) | (m_o[1:] != m_o[:-1])
+    sel = order[first]
     return (
-        rows.astype(np.int64),
-        frame_idx[slot],
-        code % 2 == 1,
-        np.clip((code // 2).astype(np.int16), 0, n_rungs),
-        dists[keep].astype(np.int32),
+        q_rows[sel],
+        f_idx[sel].astype(np.int32),
+        mirrored[sel],
+        variant[sel],
+        dist[sel],
     )
 
 

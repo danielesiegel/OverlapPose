@@ -1,4 +1,4 @@
-"""Perceptual hashing: prep normalization + the PDQ hash kernel."""
+"""Perceptual hashing: prep normalization + the PDQ and SDQ hash kernels."""
 
 from overlap.hashing.base import FLAG_LOW_QUALITY, HASH_BYTES, FrameHash, HashKernel
 from overlap.hashing.pdq import PdqKernel
@@ -19,6 +19,7 @@ from overlap.hashing.prep import (
     parse_crop_variants_spec,
     to_gray,
 )
+from overlap.hashing.sdq import SIGNAL_ALGO_ID, SIGNAL_PREP_ID, SdqKernel
 
 __all__ = [
     "CROP_SIDES",
@@ -28,9 +29,12 @@ __all__ = [
     "PREP_ID",
     "BorderCrop",
     "CropVariant",
+    "SIGNAL_ALGO_ID",
+    "SIGNAL_PREP_ID",
     "FrameHash",
     "HashKernel",
     "PdqKernel",
+    "SdqKernel",
     "apply_crop",
     "build_crop_variants",
     "center_crop",
