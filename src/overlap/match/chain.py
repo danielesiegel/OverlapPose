@@ -87,6 +87,15 @@ class ChainParams:
     min_piece_ms: float = 10_000.0
     # Jump that separates two segments rather than one sparse run.
     min_gap_ms: float = 5000.0
+    # Slope range the Hough is allowed to vote over. Video keeps the full
+    # ladder (0.125x..8x). Signal streams clamp it: phase-invariant window
+    # hashes make *repeated takes of the same scripted action* legitimately
+    # near-identical window-to-window, and with the full ladder those
+    # collisions line up into absurd steep diagonals (measured: two different
+    # HiPHI push takes chained at 8x). Bounding the ladder to plausible
+    # resale manipulation keeps them out without touching true matches.
+    slope_lo: float = 0.0
+    slope_hi: float = float("inf")
 
 
 class HoughChainMatcher:
@@ -114,6 +123,8 @@ class HoughChainMatcher:
 
         votes: Counter[tuple[int, int]] = Counter()
         for si, slope in enumerate(_SLOPES):
+            if not (p.slope_lo <= slope <= p.slope_hi):
+                continue
             bins = np.round((c - slope * q) / p.offset_bin_ms).astype(np.int64)
             for b in bins:
                 votes[(si, int(b))] += 1

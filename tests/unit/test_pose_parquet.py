@@ -22,6 +22,9 @@ N = RATE * SECONDS
 
 def _write_pose_parquet(path: Path, *, n: int = N, seed: int = 0, noise: float = 0.0) -> None:
     r = np.random.default_rng(seed)
+    # Separate stream for the additive noise, so clean and noisy variants of
+    # the same seed share identical underlying motion.
+    rn = np.random.default_rng(seed + 1000)
     t_ms = (np.arange(n) * (1000 / RATE)).astype(np.int64)
     cols: dict[str, object] = {"time_ms": t_ms, "label": np.array(["walk"] * n)}
     tt = np.arange(n) / RATE
@@ -29,8 +32,12 @@ def _write_pose_parquet(path: Path, *, n: int = N, seed: int = 0, noise: float =
         for ax in "xyz":
             f = 0.5 + 0.37 * j
             v = np.sin(2 * np.pi * f * tt + j) + 0.4 * np.cos(2 * np.pi * 2 * f * tt)
+            # A smooth aperiodic drift so windows are unambiguous in time -
+            # pure sinusoids are self-similar and let matchers latch wrong lags.
+            drift = np.cumsum(r.normal(0, 1, n))
+            v = v + 3.0 * drift / max(1.0, np.abs(drift).max())
             if noise:
-                v = v + r.normal(0, noise * v.std(), n)
+                v = v + rn.normal(0, noise * v.std(), n)
             cols[f"p{j:02d}_joint_{ax}"] = v.astype(np.float32)
     # A sparse side-channel (like 5 Hz UWB fixes): must be excluded, not fatal.
     sparse = np.full(n, np.nan)
@@ -67,10 +74,53 @@ def test_streams_and_sampling(tmp_path: Path) -> None:
     assert len(samples) == pytest.approx(SECONDS * 4, abs=3)
     t_ms, window = samples[10]
     assert window.shape[0] == 36
-    assert window.shape[1] == pytest.approx(RATE, abs=2)  # 1 s window at native rate
+    assert window.shape[1] == pytest.approx(2 * RATE, abs=2)  # WINDOW_S at native rate
     assert t_ms == int(round((10 + 0.5) / 4.0 * 1000))
     # sp1 scaling happened: channels are median-centred, IQR-scaled.
     assert abs(float(np.median(window))) < 1.0
+
+
+def test_locked_channels_floored_and_noise_robust(tmp_path: Path) -> None:
+    """Mocap-rig shape (found on HiPHI BVH data): half the channels are locked
+    joint axes carrying only quantization jitter. sp1 must scale-floor them -
+    scaling by their ~zero IQR would amplify a noised copy's noise to full
+    amplitude on channels with no motion, and the hashes would diverge; but
+    the channel *set* must stay schema-determined so trims stay comparable."""
+    from overlap.hashing.pdq_numpy import hamming
+    from overlap.hashing.sdq import SdqKernel
+
+    r = np.random.default_rng(4)
+    n = RATE * 10
+    tt = np.arange(n) / RATE
+
+    def write(path: Path, noise: float) -> None:
+        cols: dict[str, object] = {"time_ms": (np.arange(n) * (1000 / RATE)).astype(np.int64)}
+        for j in range(20):
+            v = np.sin(2 * np.pi * (0.4 + 0.3 * j) * tt + j)
+            cols[f"m{j:02d}_move"] = (v + (r.normal(0, noise * v.std(), n) if noise else 0)).astype(
+                np.float32
+            )
+        for j in range(20):  # locked axes: constant + float32-level jitter
+            v = np.full(n, 37.5) + r.normal(0, 1e-5, n)
+            cols[f"z{j:02d}_locked"] = (v + (r.normal(0, noise * 1e-5, n) if noise else 0)).astype(
+                np.float32
+            )
+        pq.write_table(pa.table(cols), path)
+
+    clean, noisy = tmp_path / "clean.parquet", tmp_path / "noisy.parquet"
+    write(clean, 0.0)
+    write(noisy, 0.1)
+    kernel = SdqKernel()
+    dists = []
+    with PoseParquetReader.open(clean) as a, PoseParquetReader.open(noisy) as b:
+        assert a.streams()[0].width == 40  # locked channels kept, scale-floored
+        for (_, wa), (_, wb) in zip(
+            a.sample("proprio", SamplePolicy(fps=4.0)),
+            b.sample("proprio", SamplePolicy(fps=4.0)),
+            strict=True,
+        ):
+            dists.append(hamming(kernel.hash_frame(wa).hash, kernel.hash_frame(wb).hash))
+    assert float(np.mean(dists)) < 30, dists
 
 
 def test_open_rejects_thin_files(tmp_path: Path) -> None:

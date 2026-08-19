@@ -1,11 +1,17 @@
 """sdq1 - the signal-domain hash kernel behind OverlapPose.
 
-``pdq2`` fingerprints decoded pixels; ``sdq1`` applies the same recipe to
-windows of multichannel proprioceptive signal (joint positions, IMU channels,
-pose trajectories): normalize, project onto a small low-frequency orthonormal
-basis, threshold every coefficient at the slab median, compare by Hamming
-distance. The recipe - not the pixels - is what makes PDQ robust, and it is
-modality-agnostic.
+``pdq2`` fingerprints decoded pixels; ``sdq1`` fingerprints windows of
+multichannel proprioceptive signal (joint positions, IMU channels, pose
+trajectories) with the same overall recipe - normalize, project onto a small
+basis, binarize against a median, compare by Hamming distance - but with a
+time representation chosen for the failure mode signals actually have:
+**phase**. A copy whose sampling grid is shifted by a fraction of a window
+(an off-grid trim, a stream-level reversal) still contains the same motion,
+so the time axis is reduced to *band energies* of the Fourier magnitude
+spectrum, which shift only mildly under sub-window misalignment and are
+exactly invariant to time reversal. Signed spectral coefficients (the naive
+port of PDQ's DCT bits) measure phase and fall to the unrelated floor at a
+28 ms shift - measured, which is why this kernel does not use them.
 
 One window = ``WINDOW_S`` seconds of all channels, taken on the same fixed
 ``(k + 0.5) / fps`` grid the video path samples frames on, so the matcher's
@@ -16,27 +22,35 @@ Pipeline per window (C channels x T native samples):
 1. time axis resampled to a fixed 256 samples (``cv2.INTER_AREA``) - the
    analog of PDQ squashing every image to a fixed square, which makes the
    hash independent of the native sample rate,
-2. 2-D orthonormal DCT: channel frequencies 0..15 x time frequencies 1..16
-   (time-DC excluded, so constant per-channel offsets vanish by construction),
-3. the 16x16 slab is thresholded at its median -> 256 bits.
+2. per-channel window mean removed (constant offsets vanish exactly; the
+   Hann window would otherwise leak them into the low bins), then a Hann
+   window in time,
+3. cross-channel structure: orthonormal DCT rows 0..31 over the channel
+   axis - channel structure carries most of the discriminative signal and
+   has no phase problem,
+4. per row, the Fourier *power* in 8 two-bin bands spanning cycles 1..9 per
+   window - the support where human/robot motion energy actually lives;
+   wider cells higher up would be noise-dominated coin flips,
+5. the 32 x 8 log-energy slab is binarized against each band's median
+   across rows -> 256 bits.
 
-Median-thresholding is what buys the Gaussian-noise robustness: white noise
-spreads its energy over all C*256 dimensions while the slab keeps 256 of
-them, and a bit only flips when the noise perturbation of its coefficient
-exceeds that coefficient's distance from the median. Measured on a real
-132-channel 1 kHz IMU stream: noise at 5% of per-channel signal sd flips
-4 bits of 256 on average; unrelated windows sit at 128 +/- 10.
+Uniform scaling shifts every log energy equally and cancels in the median;
+per-channel gains are handled by sp1 prep in the reader.
 
-The mirror slot carries the *time-reversal* digest: reversing a window in
-time multiplies time-DCT coefficient ``i`` by ``(-1)**i``, so the reversed
-digest comes from the same DCT at no extra cost - exactly how pdq2 derives
-its horizontal-mirror digest. A copy played backwards therefore lands on the
-mirror entry and is reported through the same flip machinery.
+Measured on real data (see benchmarks/bench_sdq_noise.py): unrelated windows
+sit at ~122-126 +/- 11 bits; a 125 ms grid misalignment costs ~45; a 2%
+resample ~10; time reversal exactly 0. Gaussian noise margins depend on the
+native rate, because only the in-band fraction of white noise lands in the
+band slab: at 1 kHz, noise at 5% of per-channel signal sd flips ~7 bits; at
+90 Hz (mocap-rate data) the same relative noise flips ~56 - still 6 sigma
+from the floor, but thinner. Both are honest numbers, not tuning artifacts.
 
-Not covered (documented, not hidden): resampled/speed-changed signal windows
-shift their DCT frequencies and land near the unrelated floor - the signal
-analog of a deep crop. Detecting them needs a resample ladder, the analog of
-the image crop ladder; see the README.
+The FrameHash ``mirror`` slot is deliberately inert (all zero bytes): time
+reversal already lands on the identity digest, and no other orientation
+variant exists for generic channel sets. An all-zero code is ~128 bits from
+any real digest, so the slot can never produce a hit. Whole-stream reversal
+therefore produces identity hits along a slope of -1; the temporal matcher
+does not fit negative slopes yet, which is a documented detection gap.
 """
 
 from __future__ import annotations
@@ -44,61 +58,44 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from overlap.hashing.base import FLAG_LOW_QUALITY, FrameHash
+from overlap.hashing.base import FLAG_LOW_QUALITY, HASH_BYTES, FrameHash
 from overlap.hashing.pdq_numpy import pack_bits
 
 SIGNAL_ALGO_ID = "sdq1"
 # sp1: per-channel robust scaling (median/IQR over the whole stream, computed
 # once by the reader - the signal analog of the per-stream border crop),
-# channels in sorted column order, NaN-dense columns dropped, 1 s windows.
+# channels in sorted column order, NaN-dense and near-constant channels
+# dropped (see pose_parquet), 1 s windows.
 SIGNAL_PREP_ID = "sp1"
 
-WINDOW_S = 1.0  # window length; part of prep identity
+# Window length; part of prep identity. 2 s beats 1 s on every window-level
+# measure at mocap rates (5% noise: 26 vs 65 bits; 125 ms shift: 24 vs 52) -
+# more content per hash and double the frequency resolution in the band slab.
+WINDOW_S = 2.0
 _TIME_RES = 256  # fixed time resolution after resampling
-_K = 16  # slab is _K x _K -> 256 bits
+_N_ROWS = 32  # channel-DCT rows
+_N_BANDS = 8  # two-bin Fourier bands over cycles 1..9 per window
 
 # Windows below this quality (near-idle signal) are hashed and stored but
 # flagged and excluded from ANN candidate generation, for the same reason
 # blank video frames are: near-featureless windows collide and poison matching.
 QUALITY_FLOOR = 20
 
-_DCT_TIME: np.ndarray | None = None
+_HANN = np.hanning(_TIME_RES)
 _DCT_CHAN_CACHE: dict[int, np.ndarray] = {}
 
 
-def _dct_rows(freqs: range, n: int) -> np.ndarray:
-    """Orthonormal DCT-II rows for the given frequencies over n points."""
-    i = np.arange(freqs.start, freqs.stop, dtype=np.float64)[:, None]
-    x = np.arange(n, dtype=np.float64)[None, :]
-    d: np.ndarray = np.sqrt(2.0 / n) * np.cos((np.pi / 2.0 / n) * i * (2.0 * x + 1.0))
-    if freqs.start == 0:
-        d[0] = np.sqrt(1.0 / n)
-    return d
-
-
-def _dct_time() -> np.ndarray:
-    global _DCT_TIME
-    if _DCT_TIME is None:
-        _DCT_TIME = _dct_rows(range(1, _K + 1), _TIME_RES)  # time-DC excluded
-    return _DCT_TIME
-
-
 def _dct_chan(c: int) -> np.ndarray:
+    """Orthonormal DCT-II rows 0.._N_ROWS-1 over c channel positions."""
     cached = _DCT_CHAN_CACHE.get(c)
     if cached is None:
-        cached = _dct_rows(range(0, _K), c)  # channel-DC kept: cross-channel mean matters
+        i = np.arange(_N_ROWS, dtype=np.float64)[:, None]
+        x = np.arange(c, dtype=np.float64)[None, :]
+        d = np.sqrt(2.0 / c) * np.cos((np.pi / 2.0 / c) * i * (2.0 * x + 1.0))
+        d[0] = np.sqrt(1.0 / c)
+        cached = d
         _DCT_CHAN_CACHE[c] = cached
     return cached
-
-
-# Time reversal multiplies time-DCT coefficient i by (-1)**i (freqs 1.._K).
-_REVERSAL_SIGNS = np.where(np.arange(1, _K + 1) % 2 == 0, 1.0, -1.0)[None, :]
-
-
-def _bits(slab: np.ndarray) -> np.ndarray:
-    flat = slab.reshape(-1)
-    result: np.ndarray = flat > np.median(flat)
-    return result
 
 
 class SdqKernel:
@@ -124,9 +121,14 @@ class SdqKernel:
         w = np.ascontiguousarray(window, dtype=np.float32)
         # dsize is (width, height): resample the time axis, keep every channel.
         w = cv2.resize(w, (_TIME_RES, c), interpolation=cv2.INTER_AREA).astype(np.float64)
-        slab = _dct_chan(c) @ (w @ _dct_time().T)  # _K x _K
-        bits_id = _bits(slab)
-        bits_rev = _bits(slab * _REVERSAL_SIGNS)
+        w -= w.mean(axis=1, keepdims=True)
+        rows = _dct_chan(c) @ (w * _HANN[None, :])  # _N_ROWS x _TIME_RES
+        power: np.ndarray = np.abs(np.fft.rfft(rows, axis=1)) ** 2
+        bands = np.stack(
+            [power[:, b + 1] + power[:, b + 2] for b in range(_N_BANDS)], axis=1
+        )
+        energy = np.log(bands + 1e-12)  # _N_ROWS x _N_BANDS
+        bits = energy > np.median(energy, axis=0, keepdims=True)
         # sp1-normalized units: rms 1.0 = signal moving about one IQR. Idle
         # stretches (a robot holding still) score near 0 and get flagged.
         rms = float(np.sqrt(np.mean(window * window)))
@@ -135,8 +137,8 @@ class SdqKernel:
         if quality < self.quality_floor:
             flags |= FLAG_LOW_QUALITY
         return FrameHash(
-            hash=pack_bits(bits_id),
-            mirror=pack_bits(bits_rev),
+            hash=pack_bits(bits.astype(np.uint8).reshape(-1)),
+            mirror=b"\x00" * HASH_BYTES,  # inert; see module docstring
             quality=quality,
             flags=flags,
         )

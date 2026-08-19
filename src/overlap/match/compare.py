@@ -217,11 +217,16 @@ def compare_manifest(
         if manifest.files and stream.file_idx in exact_file_idxs:
             continue  # already fully accounted as exact
         srow_for_params = corpus_streams.get(corpus_sid)
+        signal = manifest.algo_id == catalog.get_meta("signal_algo_id")
         matcher = HoughChainMatcher(
             ChainParams(
                 sample_fps=stream.sample_fps,
                 corpus_fps=srow_for_params.sample_fps if srow_for_params else None,
                 min_inliers=8,
+                # Signal streams: bound speed manipulation to the plausible
+                # resale range (see ChainParams.slope_lo).
+                slope_lo=0.4 if signal else 0.0,
+                slope_hi=2.5 if signal else float("inf"),
             )
         )
         for run in matcher.find_runs(

@@ -12,9 +12,14 @@ Sparse columns (mostly-NaN, e.g. 5 Hz UWB fixes inside a 1 kHz log) are
 excluded; text/label columns are metadata, not evidence, and are ignored.
 
 Prep (``sp1``, applied here because it needs whole-stream statistics, exactly
-like the video path's per-stream border crop): per-channel robust scaling
-``(x - median) / IQR``, residual NaNs linearly interpolated. Scaling makes the
-fingerprint invariant to unit changes and calibration offsets by construction.
+like the video path's per-stream border crop): residual NaNs linearly
+interpolated, then per-channel robust scaling ``(x - median) / IQR`` with the
+scale floored at 1% of the stream's 90th-percentile channel IQR, so
+near-constant channels (locked joint axes) shrink toward zero instead of
+having their jitter amplified - while the channel set itself stays
+schema-determined, which keeps trimmed copies comparable to their masters.
+Scaling makes the fingerprint invariant to unit changes and calibration
+offsets by construction.
 
 ``sample()`` yields one window per grid tick ``t = (k + 0.5) / fps``: a
 C x T float array covering ``WINDOW_S`` seconds centred on the tick (clamped
@@ -125,11 +130,22 @@ class PoseParquetSession:
             if bad.any():
                 idx = np.arange(len(row))
                 row[bad] = np.interp(idx[bad], idx[~bad], row[~bad])
+        iqr = np.percentile(x, 75, axis=1) - np.percentile(x, 25, axis=1)
+        # Near-constant channels (locked joint axes, frozen offsets - in mocap
+        # rigs half the columns can be these) must not be scaled by their own
+        # ~zero IQR: that amplifies quantization jitter to full signal
+        # amplitude, so a noised copy diverges wildly on channels that carry
+        # no motion at all. They also must not be *dropped*: which channels
+        # move depends on the content, so a trimmed copy would keep a
+        # different channel set than its master and the two would never
+        # compare (measured: a 15 s trim of a HiPHI motion shifts the set by
+        # two channels and every hash decorrelates). Instead the scale is
+        # floored at 1% of the stream's 90th-percentile channel IQR: the
+        # channel set stays schema-determined, and near-constant channels
+        # shrink to ~zero amplitude instead of becoming noise.
         med = np.median(x, axis=1, keepdims=True)
-        iqr = np.percentile(x, 75, axis=1, keepdims=True) - np.percentile(
-            x, 25, axis=1, keepdims=True
-        )
-        self._x = (x - med) / np.maximum(iqr, 1e-9)
+        floor = max(0.01 * float(np.percentile(iqr, 90)), 1e-9)
+        self._x = (x - med) / np.maximum(iqr[:, None], floor)
         self._channels = dense
 
         dt = np.diff(self._t_s)

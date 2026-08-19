@@ -84,15 +84,26 @@ def main() -> None:
     print(f"\nunrelated floor (>10 s apart): mean {floor.mean():.1f} sd {floor.std():.1f} "
           f"min {floor.min()}")
 
-    # The documented negative result: resampling shifts DCT frequencies.
+    # Phase: an off-grid copy is misaligned by up to half a hop (125 ms).
+    d_shift = int(round(0.125 * rate))
+    shifted = codes(x[:, d_shift:], rate)
+    m = min(len(shifted), n_win)
+    print(f"125 ms grid misalignment: mean {dist(base[:m], shifted[:m]).mean():.1f}")
+
+    # Small speed change: band energies move only slightly.
     idx = np.arange(0, int(x.shape[1] / 1.02)) * 1.02
     xr = np.stack([np.interp(idx, np.arange(x.shape[1]), row) for row in x])
     res = codes(xr, rate)
     m = min(len(res), n_win)
     aligned = np.clip(np.round(np.arange(m) * 1.02).astype(int), 0, n_win - 1)
-    d = dist(base[aligned], res[:m])
-    print(f"2% resample (speed change), content-aligned: mean {d.mean():.1f} "
-          f"- at the floor, i.e. NOT detected (see README limits)")
+    d_res = dist(base[aligned], res[:m])
+    print(f"2% resample (speed change), content-aligned: mean {d_res.mean():.1f}")
+
+    # Reversal is exact by construction; measure it anyway.
+    rev = codes(x[:, ::-1], rate)
+    m = min(len(rev), n_win)
+    aligned = np.clip(n_win - 1 - np.arange(m), 0, n_win - 1)
+    print(f"time reversal, content-aligned: mean {dist(base[aligned], rev[:m]).mean():.1f}")
 
 
 if __name__ == "__main__":
